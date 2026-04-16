@@ -39,43 +39,67 @@ void generateAllSubsetsPermutations( std::ostream &oss, const std::vector< T > &
 
     std::cout << "Computing all permutations: (" << totalCount << ")\n";
 
-    oss << R"__(#!/bin/bash
+    std::string header = R"__(#!/bin/bash
 
 logFile=buildAllConfigs.log
+totalNum=)__" + std::to_string( totalCount ) + R"__(
+currentConfigNum=0
+passed=()
+failed=()
 
 buildConfig() {
     local configName=$1
-    local currConfigNum=$2
-    local totalConfigs=$3
-    local options=${@:4}
+    local options=${@:2}
 
     local localLogFile=${configName}/${configName}.log
 
     echo "===========================================" | tee -a ${logFile}
-    echo "Building configuration \"$configName\" (${currConfigNum} of ${totalConfigs})" | tee -a ${logFile}
+    echo "Building configuration \"$configName\" (${currentConfigNum} of ${totalNum} Passed: ${#passed[@]} Failed: ${#failed[@]})" | tee -a ${logFile}
     rm -rf ${configName} |& tee -a ${logFile} || return 1
     mkdir -p $configName |& tee -a ${logFile} || return 1
 
-    cmake -S . -B ${configName} -Wno-dev -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC $options |& tee -a ${logFile} > ${localLogFile} || return 1
-    echo "    CMake ran successfully" | tee -a ${logFile} ${localLogFile}
+    currentConfigNum=$(($currentConfigNum + 1))
+    
+    cmake -S . -B ${configName} -Wno-dev -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC $options |& tee -a ${logFile} > ${localLogFile}
+    status=${PIPESTATUS[0]}
+    if [[ $status == 0 ]]; then
+        echo "    CMake ran successfully" | tee -a ${logFile} ${localLogFile}
+    else
+        echo "    BUILD: FAILED" | tee -a ${logFile} ${localLogFile}
+        failed+=(${configName})
+        return 1
+    fi
 
     cmake --build ${configName} |& tee -a ${logFile} > ${localLogFile}
     status=${PIPESTATUS[0]}
-    echo "===========================================" | tee -a ${logFile} ${localLogFile}
     if [[ $status == 0 ]]; then
         echo "    BUILD: PASSED" | tee -a ${logFile} ${localLogFile}
+        passed+=(${configName})
     else
         echo "    BUILD: FAILED" | tee -a ${logFile} ${localLogFile}
+        failed+=(${configName})
     fi
-    echo "===========================================" | tee -a ${logFile} ${localLogFile}
     
     return 0
+}
+
+reportSummary() {
+    echo "===========================================" | tee -a ${logFile}
+    echo "Summary:"
+    echo "Number of Configurations Run: ${currConfigNum}"
+    echo "                         Passed: ${#passed[@]}"
+    echo "                         Failed: ${#failed[@]}"
+    echo "Failed Configurations:"
+    for config in "${failed[@]}"; do
+        echo "    $config"
+    done
 }
 
 rm -rf ${logFile}
 
 )__";
 
+    oss << header;
     for ( auto ii = 0ULL; ii < totalCount; ++ii )
     {
         if ( ( ii % updateVal ) == 0 )
@@ -85,8 +109,8 @@ rm -rf ${logFile}
         os << "build_config_" << std::setw( 3 ) << std::setfill( '0' ) << ii;
         auto configName = os.str();
 
-        oss << "buildConfig " << configName << " " << ii << " " << totalCount;
-        for ( auto jj = items.size() - 1 ; jj >= 0; --jj )
+        oss << "buildConfig " << configName;
+        for ( auto jj = items.size() - 1; jj >= 0; --jj )
         {
             oss << " -D" << items[ items.size() - 1 - jj ] << "=";
             if ( ( ( ii >> jj ) & 0x01 ) != 0 )
@@ -98,8 +122,9 @@ rm -rf ${logFile}
         }
         oss << "\n";
         if ( ii == 1 )
-            oss << "exit\n";
+            oss << "reportSummary\nexit\n";
     }
+    oss << "reportSummary\nexit\n";
 }
 
 void usage()
