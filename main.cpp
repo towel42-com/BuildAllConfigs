@@ -29,10 +29,9 @@
 #include <sstream>
 #include <iomanip>
 
-template< typename T >
-void generateAllSubsetsPermutations( std::ostream &oss, const std::vector< T > &items )
+void generateAllConfigs( std::ostream &oss, const std::vector< std::string > &configs, bool ninja )
 {
-    std::size_t totalCount = 1ULL << items.size();
+    std::size_t totalCount = 1ULL << configs.size();
     auto updateVal = std::min( totalCount / 10, 100ULL );
     if ( updateVal == 0 )
         updateVal = 1;
@@ -42,7 +41,8 @@ void generateAllSubsetsPermutations( std::ostream &oss, const std::vector< T > &
     std::string header = R"__(#!/bin/bash
 
 logFile=buildAllConfigs.log
-totalNum=)__" + std::to_string( totalCount ) + R"__(
+totalNum=)__" + std::to_string( totalCount )
+                         + R"__(
 currentConfigNum=0
 passed=()
 failed=()
@@ -60,7 +60,10 @@ buildConfig() {
 
     currentConfigNum=$(($currentConfigNum + 1))
     
-    cmake -S . -B ${configName} -Wno-dev -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC $options |& tee -a ${logFile} > ${localLogFile}
+    cmake -S . -B ${configName} -Wno-dev)__"
+                         + ( ninja ? R"__(-G "Ninja Multi-Config -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC)__" 
+                                   : "" ) +
+    R"__( -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ $options |& tee -a ${logFile} > ${localLogFile}
     status=${PIPESTATUS[0]}
     if [[ $status == 0 ]]; then
         echo "    CMake ran successfully" | tee -a ${logFile} ${localLogFile}
@@ -110,9 +113,9 @@ rm -rf ${logFile}
         auto configName = os.str();
 
         oss << "buildConfig " << configName;
-        for ( auto jj = items.size() - 1; jj >= 0; --jj )
+        for ( auto jj = configs.size() - 1; jj >= 0; --jj )
         {
-            oss << " -D" << items[ items.size() - 1 - jj ] << "=";
+            oss << " -D" << configs[ configs.size() - 1 - jj ] << "=";
             if ( ( ( ii >> jj ) & 0x01 ) != 0 )
                 oss << "ON ";
             else
@@ -129,8 +132,9 @@ rm -rf ${logFile}
 
 void usage()
 {
-    std::cout << R"__(buildAllConfigs -script <filename> config1 [config2...]
+    std::cout << R"__(buildAllConfigs -script <filename> [-ninja] config1 [config2...]
       -script <filename>: Filename to generate (defaults to stdout if not set)
+      -ninja: Use the Ninja Multi-Config cmake configuration (default false, uses the default for the system)"
     config1 [config2...]: Configurations to generate from required, no default
 )__";
 }
@@ -138,6 +142,7 @@ void usage()
 int main( int argc, char **argv )
 {
     std::string scriptFile;
+    bool ninja = false;
     std::vector< std::string > configs;
 
 #ifdef _DEBUG
@@ -158,6 +163,7 @@ int main( int argc, char **argv )
         "TOWEL42_QXML_SUPPORT"   //
     };
 #endif
+    bool firstConfig = true;
 
     for ( int ii = 1; ii < argc; ++ii )
     {
@@ -170,12 +176,14 @@ int main( int argc, char **argv )
                 scriptFile = argv[ ++ii ];
             }
         }
+        else if ( std::string( argv[ ii ] ) == "--ninja" )
+        {
+            ninja = true;
+        }
         else
         {
-#ifdef _DEBUG
-            if ( ii == 3 )
+            if ( firstConfig )
                 configs.clear();
-#endif
             configs.emplace_back( argv[ ii ] );
         }
     }
@@ -193,9 +201,7 @@ int main( int argc, char **argv )
         oss = &ofs;
     }
 
-    generateAllSubsetsPermutations< std::string >(
-        *oss,   //
-        configs );
+    generateAllConfigs( *oss, configs, ninja );
     if ( !scriptFile.empty() )
         std::cout << "Finished creating script '" << scriptFile << "'\n";
     return 0;
