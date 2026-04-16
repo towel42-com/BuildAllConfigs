@@ -57,7 +57,20 @@ while [[ $# -gt 0 ]]; do
     case $arg in 
         --logfile)
             shift
-            LOG_FILE=$1
+            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
+                echo "Error: --logfile requires a non-empty filename argument"
+                Usage
+                exit 1
+            fi
+            if [[ "$1" == */* ]]; then
+                log_dir="$(dirname "$1")"
+                if [[ ! -d "$log_dir" ]]; then
+                    echo "Error: invalid log file path '$1'"
+                    exit 1
+                fi
+            fi
+            LOG_FILE="$1"
+
             shift
         ;;
         -h*|--help)
@@ -81,7 +94,7 @@ buildConfig() {
     local configName=$1
     local options=${@:2}
 
-    if [[ "${#CONFIGS[@]}" -gt 0 && ! -v CONFIGS["${configName}"] ]]; then
+    if [[ "${#CONFIGS[@]}" -gt 0 && ! -v CONFIGS["${configName}"] ]]; then #requires bash 4.2+
         echo "Skipping config ${configName}"
         return 0
     fi
