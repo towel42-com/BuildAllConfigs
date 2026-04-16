@@ -54,12 +54,11 @@ buildConfig() {
     local localLogFile=${configName}/${configName}.log
 
     echo "===========================================" | tee -a ${logFile}
+    currentConfigNum=$(($currentConfigNum + 1))
     echo "Building configuration \"$configName\" (${currentConfigNum} of ${totalNum} Passed: ${#passed[@]} Failed: ${#failed[@]})" | tee -a ${logFile}
     rm -rf ${configName} |& tee -a ${logFile} || return 1
     mkdir -p $configName |& tee -a ${logFile} || return 1
 
-    currentConfigNum=$(($currentConfigNum + 1))
-    
     cmake -S . -B ${configName} -Wno-dev)__"
                          + ( ninja ? R"__(-G "Ninja Multi-Config -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC)__" 
                                    : "" ) +
@@ -88,13 +87,13 @@ buildConfig() {
 
 reportSummary() {
     echo "===========================================" | tee -a ${logFile}
-    echo "Summary:"
-    echo "Number of Configurations Run: ${currConfigNum}"
-    echo "                         Passed: ${#passed[@]}"
-    echo "                         Failed: ${#failed[@]}"
-    echo "Failed Configurations:"
+    echo "Summary:" | tee -a ${logFile}
+    echo "Number of Configurations Run: ${currentConfigNum}" | tee -a ${logFile}
+    echo "                         Passed: ${#passed[@]}" | tee -a ${logFile}
+    echo "                         Failed: ${#failed[@]}" | tee -a ${logFile}
+    echo "Failed Configurations:" | tee -a ${logFile}
     for config in "${failed[@]}"; do
-        echo "    $config"
+        echo "    $config" | tee -a ${logFile}
     done
 }
 
