@@ -38,18 +38,33 @@ void generateAllConfigs( std::ostream &oss, const std::vector< std::string > &co
 
     std::cout << "Computing all permutations: (" << totalCount << ")\n";
 
+    // when to make a fresh directory, when to override cmake
+    // exists | run cmake | run build || fresh | override cmake
+    //   0    |    0      |     0     ||   0   |      0
+    //   0    |    0      |     1     ||   1   |      1
+    //   0    |    1      |     0     ||   1   |      0
+    //   0    |    1      |     1     ||   1   |      0
+    //   1    |    0      |     0     ||   0   |      0
+    //   1    |    0      |     1     ||   0   |      0
+    //   1    |    1      |     0     ||   1   |      0
+    //   1    |    1      |     1     ||   1   |      0
+
     std::string header = R"__(#!/bin/bash
 
 Usage() {
-    echo "buildAllConfigs.sh: --logfile <filename> [config1 config2...] "
+    echo "buildAllConfigs.sh: --logfile <filename> --nobuild --nocmake [config1 config2...] "
     echo "    Run all configurations"
     echo "     --logfile : The output log file for all the runs (default buildAllConfigs.log)"
+    echo "     --nobuild : Only run the cmake portion (default false)"
+    echo "     --nocmake : Only run the build portion (default false)"
     echo "       configN : The list of configurations to run (default run all)"
     echo ""
     echo "     -h|--help   : Displays this message"
 }
 
 LOG_FILE=buildAllConfigs.log
+RUN_BUILD=1
+RUN_CMAKE=1
 declare -A CONFIGS
 
 while [[ $# -gt 0 ]]; do
@@ -73,6 +88,14 @@ while [[ $# -gt 0 ]]; do
 
             shift
         ;;
+        --nobuild)
+            RUN_BUILD=0
+            shift
+        ;;
+        --nocmake)
+            RUN_CMAKE=0
+            shift
+        ;;
         -h*|--help)
             Usage
             exit 0
@@ -84,18 +107,27 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+#echo "RUN_BUILD=${RUN_BUILD}"
+#echo "RUN_CMAKE=${RUN_CMAKE}"
+
 totalNum=)__" + std::to_string( totalCount )
                          + R"__(
 currentConfigNum=0
 passed=()
 failed=()
+skipped=()
 
 buildConfig() {
     local configName=$1
     local options=${@:2}
 
     if [[ "${#CONFIGS[@]}" -gt 0 && ! -v CONFIGS["${configName}"] ]]; then #requires bash 4.2+
-        echo "Skipping config ${configName}"
+        skipped+=(${configName})
+    fi
+
+    local currStatus="configuration \"$configName\" (${currentConfigNum} of ${totalNum} Passed: ${#passed[@]} Failed: ${#failed[@]} Skipped: ${#skipped[@]})"
+    if [[ "${#CONFIGS[@]}" -gt 0 && ! -v CONFIGS["${configName}"] ]]; then #requires bash 4.2+
+        echo "Skipping $currStatus" | tee -a ${LOG_FILE}
         return 0
     fi
 
@@ -103,33 +135,58 @@ buildConfig() {
 
     echo "===========================================" | tee -a ${LOG_FILE}
     currentConfigNum=$(($currentConfigNum + 1))
-    echo "Building configuration \"$configName\" (${currentConfigNum} of ${totalNum} Passed: ${#passed[@]} Failed: ${#failed[@]})" | tee -a ${LOG_FILE}
-    rm -rf ${configName} |& tee -a ${LOG_FILE} || return 1
-    mkdir -p $configName |& tee -a ${LOG_FILE} || return 1
+    echo "Building $currStatus" | tee -a ${LOG_FILE}
 
-    cmake -S . -B ${configName} -Wno-dev)__"
-                         + ( ninja ? R"__(-G "Ninja Multi-Config" -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC)__" 
-                                   : "" ) +
-    R"__( -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ $options |& tee -a ${LOG_FILE} > ${localLogFile}
-    status=${PIPESTATUS[0]}
-    if [[ $status == 0 ]]; then
-        echo "    CMake ran successfully" | tee -a ${LOG_FILE} ${localLogFile}
-    else
-        echo "    BUILD: FAILED" | tee -a ${LOG_FILE} ${localLogFile}
-        failed+=(${configName})
-        return 1
-    fi
-
-    cmake --build ${configName} |& tee -a ${LOG_FILE} > ${localLogFile}
-    status=${PIPESTATUS[0]}
-    if [[ $status == 0 ]]; then
-        echo "    BUILD: PASSED" | tee -a ${LOG_FILE} ${localLogFile}
-        passed+=(${configName})
-    else
-        echo "    BUILD: FAILED" | tee -a ${LOG_FILE} ${localLogFile}
-        failed+=(${configName})
+    # if you are running cmake, always start from a clean directory
+    # if you are building without cmake, use the existing one
+    # if it doesnt exist, create if building
+    # if it exists and you are not running cmake or build, DO NOT delete it
+    local _mkdir=0
+    if [[ ${RUN_CMAKE} == 1 || ( ! -d ${configName} && ${RUN_BUILD} == 1 ) ]]; then
+        _mkdir=1
     fi
     
+    local _forceRunCMake=0
+    if [[ ${RUN_BUILD} == 1 && ${RUN_CMAKE} == 0 && ! -d ${configName} ]]; then
+        _forceRunCMake=1
+    fi
+
+    if [[ ${_mkdir} == 1 ]]; then
+        rm -rf ${configName} |& tee -a ${LOG_FILE} || return 1
+        mkdir -p $configName |& tee -a ${LOG_FILE} || return 1
+    fi
+
+    if [[ ${_forceRunCMake} == 1 || ${RUN_CMAKE} == 1 ]]; then
+        echo "    Running CMake for configuration \"$configName\"" | tee -a ${LOG_FILE}
+        cmake -S . -B ${configName} -Wno-dev)__"
+                         + ( ninja ? R"__(-G "Ninja Multi-Config" -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl -DCMAKE_LINKER_TYPE=MSVC)__" : "" ) +
+                         R"__( -DTOWEL42_CMAKEUTILS_DIR=../T42-CMakeUtils/ $options |& tee -a ${LOG_FILE} > ${localLogFile}
+        status=${PIPESTATUS[0]}
+        if [[ $status == 0 ]]; then
+            if [[ ${RUN_BUILD} == 0 ]] ; then
+                passed+=(${configName})
+            fi
+            echo "    CMake: PASSED" | tee -a ${LOG_FILE} ${localLogFile}
+        else
+            echo "    CMake: FAILED" | tee -a ${LOG_FILE} ${localLogFile}
+            failed+=(${configName})
+            return 1
+        fi
+    fi
+
+    if [[ ${RUN_BUILD} == 1 ]]; then
+        echo "    Running Build for configuration \"$configName\"" | tee -a ${LOG_FILE}
+        cmake --build ${configName} |& tee -a ${LOG_FILE} > ${localLogFile}
+        status=${PIPESTATUS[0]}
+        if [[ $status == 0 ]]; then
+            echo "    BUILD: PASSED" | tee -a ${LOG_FILE} ${localLogFile}
+            passed+=(${configName})
+        else
+            echo "    BUILD: FAILED" | tee -a ${LOG_FILE} ${localLogFile}
+            failed+=(${configName})
+        fi
+    fi
+
     return 0
 }
 
@@ -139,6 +196,7 @@ reportSummary() {
     echo "Number of Configurations Run: ${currentConfigNum}" | tee -a ${LOG_FILE}
     echo "                         Passed: ${#passed[@]}" | tee -a ${LOG_FILE}
     echo "                         Failed: ${#failed[@]}" | tee -a ${LOG_FILE}
+    echo "                        Skipped: ${#skipped[@]}" | tee -a ${LOG_FILE}
     echo "Failed Configurations:" | tee -a ${LOG_FILE}
     for config in "${failed[@]}"; do
         echo "    $config" | tee -a ${LOG_FILE}
